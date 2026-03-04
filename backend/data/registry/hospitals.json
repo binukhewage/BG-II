@@ -1,0 +1,39 @@
+{
+    "hospitals": [
+        {
+            "id": 1,
+            "file": "hospital_1.csv",
+            "patients": 414,
+            "active": true,
+            "type": "core"
+        },
+        {
+            "id": 2,
+            "file": "hospital_2.csv",
+            "patients": 414,
+            "active": true,
+            "type": "core"
+        },
+        {
+            "id": 3,
+            "file": "hospital_3.csv",
+            "patients": 415,
+            "active": true,
+            "type": "core"
+        },
+        {
+            "id": 4,
+            "file": "hospital_4.csv",
+            "patients": 414,
+            "active": true,
+            "type": "core"
+        },
+        {
+            "id": 5,
+            "file": "hospital_5.csv",
+            "patients": 421,
+            "active": true,
+            "type": "core"
+        }
+    ]
+}
