@@ -137,12 +137,22 @@ class FederatedClient:
         non_senior_mask = protected == 0
 
         if senior_mask.sum() > 0 and non_senior_mask.sum() > 0:
-            dp_senior = preds[senior_mask].mean()
-            dp_non_senior = preds[non_senior_mask].mean()
-            demographic_parity = abs(dp_senior - dp_non_senior)
-        else:
-            demographic_parity = 0.0
 
+            # Positive prediction rates
+            senior_positive_rate = preds[senior_mask].mean()
+            non_senior_positive_rate = preds[non_senior_mask].mean()
+
+            # Directional bias
+            dp_gap_direction = senior_positive_rate - non_senior_positive_rate
+
+            # Absolute fairness metric
+            demographic_parity = abs(dp_gap_direction)
+
+        else:
+            senior_positive_rate = 0.0
+            non_senior_positive_rate = 0.0
+            dp_gap_direction = 0.0
+            demographic_parity = 0.0
         # ---- Equal Opportunity ----
         def true_positive_rate(mask):
             positives = (y_true[mask] == 1)
@@ -156,7 +166,13 @@ class FederatedClient:
 
         return {
             "auc": float(auc),
+
             "demographic_parity": float(demographic_parity),
+            "dp_gap_direction": float(dp_gap_direction),
+
+            "senior_positive_rate": float(senior_positive_rate),
+            "non_senior_positive_rate": float(non_senior_positive_rate),
+
             "equal_opportunity": float(equal_opportunity),
             "samples": len(y_true)
         }

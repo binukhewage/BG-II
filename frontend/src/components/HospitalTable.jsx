@@ -11,6 +11,7 @@ export default function HospitalTable({ hospitals }) {
   // ---- Sort by DP descending (worst first) ----
   const sortedHospitals = [...hospitals].sort((a, b) => b.dp - a.dp);
 
+  // ---- Risk classification relative to network ----
   const getRiskLevel = (value, networkAvg) => {
     const deviation = value - networkAvg;
 
@@ -33,6 +34,31 @@ export default function HospitalTable({ hospitals }) {
           "bg-red-900/50 text-red-300 border border-red-700",
       };
     }
+  };
+
+  // ---- Bias direction (which group affected) ----
+  const getBiasDirection = (gap) => {
+    if (gap > 0) {
+      return {
+        label: "Senior patients disadvantaged",
+        style:
+          "bg-red-900/50 text-red-300 border border-red-700",
+      };
+    }
+
+    if (gap < 0) {
+      return {
+        label: "Non-senior patients disadvantaged",
+        style:
+          "bg-orange-900/50 text-orange-300 border border-orange-700",
+      };
+    }
+
+    return {
+      label: "Balanced",
+      style:
+        "bg-green-900/50 text-green-300 border border-green-700",
+    };
   };
 
   return (
@@ -64,6 +90,7 @@ export default function HospitalTable({ hospitals }) {
         </div>
       </div>
 
+      {/* Table */}
       <div className="overflow-x-auto">
         <table className="w-full text-left border-collapse">
           <thead>
@@ -71,8 +98,9 @@ export default function HospitalTable({ hospitals }) {
               <th className="py-3">Rank</th>
               <th>Hospital</th>
               <th>AUC</th>
-              <th>Demographic Parity</th>
-              <th>Equal Opportunity</th>
+              <th>DP</th>
+              <th>EO</th>
+              <th>Bias Direction</th>
               <th>Bias Status</th>
               <th>Samples</th>
             </tr>
@@ -81,6 +109,7 @@ export default function HospitalTable({ hospitals }) {
           <tbody>
             {sortedHospitals.map((h, index) => {
               const risk = getRiskLevel(h.dp, avgDP);
+              const direction = getBiasDirection(h.dp_direction);
               const isWorst = index === 0;
 
               return (
@@ -117,6 +146,16 @@ export default function HospitalTable({ hospitals }) {
                     {h.eo.toFixed(3)}
                   </td>
 
+                  {/* Bias Direction */}
+                  <td>
+                    <span
+                      className={`px-3 py-1 rounded-full text-xs font-semibold ${direction.style}`}
+                    >
+                      {direction.label}
+                    </span>
+                  </td>
+
+                  {/* Bias Status */}
                   <td>
                     <span
                       className={`px-3 py-1 rounded-full text-xs font-semibold ${risk.style}`}

@@ -23,9 +23,8 @@ FAIRNESS_LAMBDA = 15.0
 DP_SIGMA = 0.002
 MAX_GRAD_NORM = 1.0
 
-# -------------------------------
 # Differential Privacy Settings
-# -------------------------------
+
 
 DP_ENABLED = True  # Set to True to enable DP, False to disable
 
