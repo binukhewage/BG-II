@@ -34,6 +34,13 @@
             "patients": 421,
             "active": true,
             "type": "core"
+        },
+        {
+            "id": 6,
+            "file": "hospital_6.csv",
+            "patients": 414,
+            "active": true,
+            "type": "onboarded"
         }
     ]
 }

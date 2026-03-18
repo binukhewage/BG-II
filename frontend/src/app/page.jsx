@@ -9,6 +9,7 @@ import TrainingChart from "../components/TrainingChart";
 import HospitalTable from "../components/HospitalTable";
 import OnboardHospital from "../components/OnboardHospital";
 import FairnessAnalytics from "../components/FairnessAnalytics";
+import BiasDetectionFeed from "../components/BiasDetectionFeed";
 
 export default function Home() {
   const [data, setData] = useState(null);
@@ -18,59 +19,99 @@ export default function Home() {
   const [currentRound, setCurrentRound] = useState(0);
   const router = useRouter();
 
+  // -----------------------------------------
+  // Restore state ONLY when navigating back
+  // from /clinician — not on a fresh page load
+  // or browser refresh.
+  //
+  // How it works:
+  // - When user clicks "Clinician View", we set
+  //   a "navigating_to_clinician" flag BEFORE
+  //   the route changes.
+  // - On mount, we check if that flag exists.
+  //   If yes → came back from clinician → restore.
+  //   If no  → fresh load or refresh → stay clean.
+  // - The flag is always removed after reading
+  //   so it only works once per navigation.
+  // -----------------------------------------
   useEffect(() => {
-  const saved = localStorage.getItem("biasguard_state");
+    const cameFromClinician = sessionStorage.getItem("navigating_to_clinician");
 
-  if (saved) {
-    const parsed = JSON.parse(saved);
-    setData(parsed);
-    setVisibleRounds(parsed.bias_aware?.round_history || []);
-    setCurrentRound(parsed.bias_aware?.round_history?.length || 0);
-  }
-}, []);
+    if (cameFromClinician) {
+      // Remove the flag immediately — one use only
+      sessionStorage.removeItem("navigating_to_clinician");
+
+      const saved = sessionStorage.getItem("biasguard_state");
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          setData(parsed);
+          setVisibleRounds(parsed.bias_aware?.round_history || []);
+          setCurrentRound(parsed.bias_aware?.round_history?.length || 0);
+        } catch {
+          sessionStorage.removeItem("biasguard_state");
+        }
+      }
+    } else {
+      // Fresh load or browser refresh — clear everything
+      sessionStorage.removeItem("biasguard_state");
+    }
+  }, []);
 
   const handleStart = async () => {
-    setLoading(true);
+    sessionStorage.removeItem("biasguard_state");
+
+    setData(null);
     setVisibleRounds([]);
     setCurrentRound(0);
     setMode("bias");
+    setLoading(true);
 
-    const result = await startFederation();
-    setData(result);
-    localStorage.setItem("biasguard_state", JSON.stringify(result));
+    try {
+      const result = await startFederation();
 
-    const rounds = result.bias_aware.round_history;
+      sessionStorage.setItem("biasguard_state", JSON.stringify(result));
+      setData(result);
 
-    let i = 0;
-    const interval = setInterval(() => {
-      setVisibleRounds((prev) => [...prev, rounds[i]]);
-      setCurrentRound(i + 1);
-      i++;
+      const rounds = result.bias_aware.round_history;
+      let i = 0;
 
-      if (i >= rounds.length) {
-        clearInterval(interval);
-        setLoading(false);
-      }
-    }, 800);
+      const interval = setInterval(() => {
+        setVisibleRounds((prev) => [...prev, rounds[i]]);
+        setCurrentRound(i + 1);
+        i++;
+
+        if (i >= rounds.length) {
+          clearInterval(interval);
+          setLoading(false);
+        }
+      }, 800);
+
+    } catch (err) {
+      console.error("Federation failed:", err);
+      sessionStorage.removeItem("biasguard_state");
+      setData(null);
+      setLoading(false);
+    }
   };
 
   const refreshDashboard = (update) => {
     if (!update) return;
 
     setData((prev) => {
-  const updated = {
-    ...prev,
-    bias_aware: {
-      ...prev.bias_aware,
-      round_history: update.round_history,
-      hospital_metrics: update.hospital_metrics,
-    },
-    active_hospitals: update.active_hospitals,
-  };
+      const updated = {
+        ...prev,
+        bias_aware: {
+          ...prev.bias_aware,
+          round_history: update.round_history,
+          hospital_metrics: update.hospital_metrics,
+        },
+        active_hospitals: update.active_hospitals,
+      };
 
-  localStorage.setItem("biasguard_state", JSON.stringify(updated));
-  return updated;
-});
+      sessionStorage.setItem("biasguard_state", JSON.stringify(updated));
+      return updated;
+    });
 
     const oldLength = visibleRounds.length;
     const newRounds = update.round_history.slice(oldLength);
@@ -144,41 +185,48 @@ export default function Home() {
   const baselineHistory = data?.baseline?.round_history || [];
   const biasHistory = data?.bias_aware?.round_history || [];
 
-  const baselineCurrent =
-    baselineHistory[currentIndex] || baselineHistory[baselineHistory.length - 1] || { avg_dp: 0, avg_eo: 0 };
+  // Baseline is ALWAYS compared at its final round —
+  // it ran first and is fully complete. Comparing at
+  // the same animation index was wrong because baseline
+  // round 3 vs BiasGuard round 3 is not a fair comparison.
+  const baselineFinal =
+    baselineHistory[baselineHistory.length - 1] || { avg_dp: 0, avg_eo: 0 };
+
+  // BiasGuard tracks the animated current round
   const biasAwareCurrent =
     biasHistory[currentIndex] || biasHistory[biasHistory.length - 1] || { avg_dp: 0, avg_eo: 0 };
-
-  const baselinePrevious =
-    currentIndex > 0 ? baselineHistory[currentIndex - 1] || baselineCurrent : baselineCurrent;
   const biasAwarePrevious =
     currentIndex > 0 ? biasHistory[currentIndex - 1] || biasAwareCurrent : biasAwareCurrent;
 
-  const prevDpMitigated = baselinePrevious.avg_dp - biasAwarePrevious.avg_dp;
-  const currentDpMitigated = baselineCurrent.avg_dp - biasAwareCurrent.avg_dp;
-  const dpRoundDelta = currentDpMitigated - prevDpMitigated;
+  // How much DP BiasGuard has suppressed vs baseline final
+  const currentDpMitigated = baselineFinal.avg_dp - biasAwareCurrent.avg_dp;
+  const prevDpMitigated    = baselineFinal.avg_dp - biasAwarePrevious.avg_dp;
+  const dpRoundDelta        = currentDpMitigated - prevDpMitigated;
 
-  const prevEoMitigated = baselinePrevious.avg_eo - biasAwarePrevious.avg_eo;
-  const currentEoMitigated = baselineCurrent.avg_eo - biasAwareCurrent.avg_eo;
-  const eoRoundDelta = currentEoMitigated - prevEoMitigated;
+  const currentEoMitigated = baselineFinal.avg_eo - biasAwareCurrent.avg_eo;
+  const prevEoMitigated    = baselineFinal.avg_eo - biasAwarePrevious.avg_eo;
+  const eoRoundDelta        = currentEoMitigated - prevEoMitigated;
 
+  // Percentage reduction relative to baseline final DP
   const biasReductionPercent =
-    baselineCurrent.avg_dp > 0 ? (currentDpMitigated / baselineCurrent.avg_dp) * 100 : 0;
+    baselineFinal.avg_dp > 0 ? (currentDpMitigated / baselineFinal.avg_dp) * 100 : 0;
   const biasStatus =
-    currentDpMitigated >= 0 ? `Bias Reduced by ${biasReductionPercent.toFixed(1)}%` : "Bias Increasing ⚠";
+    currentDpMitigated >= 0
+      ? `Bias Reduced by ${biasReductionPercent.toFixed(1)}%`
+      : "Bias Increasing ⚠";
   const biasStatusColor = currentDpMitigated >= 0 ? "text-emerald-400" : "text-red-400";
 
   const totalRounds = selected.round_history.length;
   const progressPercent = (currentRound / totalRounds) * 100;
+
+  // In BiasGuard mode show the animated current round metrics.
+  // In baseline mode always show the final baseline values.
   const currentRoundData =
-    selected.round_history[currentIndex] || selected.round_history[selected.round_history.length - 1] || {
-      avg_auc: 0,
-      avg_dp: 0,
-      avg_eo: 0,
-    };
+    mode === "bias"
+      ? biasAwareCurrent
+      : baselineFinal;
 
   const privacy = data.privacy || { enabled: false, noise_scale: 0, clip_value: 0 };
-  
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-slate-100 p-6 md:p-8 selection:bg-cyan-500/30">
@@ -211,11 +259,15 @@ export default function Home() {
               {loading ? "Training..." : "Restart Simulation"}
             </button>
             <button
-  onClick={() => router.push("/clinician")}
-  className="bg-cyan-600 hover:bg-cyan-700 text-white px-4 py-2 rounded-xl text-sm"
->
-  Clinician View
-</button>
+              onClick={() => {
+              // Set flag so when user comes back, state is restored
+              sessionStorage.setItem("navigating_to_clinician", "true");
+              router.push("/clinician");
+            }}
+              className="bg-cyan-600 hover:bg-cyan-700 text-white px-4 py-2 rounded-xl text-sm"
+            >
+              Clinician View
+            </button>
           </div>
         </div>
 
@@ -252,21 +304,21 @@ export default function Home() {
 
         {/* Row 2: Metrics cards */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-          <MetricCard title="Global AUC" value={currentRoundData.avg_auc.toFixed(3)} subtitle="Utility" dark />
-          <MetricCard title="DP Score" value={currentRoundData.avg_dp.toFixed(3)} subtitle="Fairness Gap" dark />
-          <MetricCard title="EO Score" value={currentRoundData.avg_eo.toFixed(3)} subtitle="Opportunity Gap" dark />
-          <MetricCard title="Active Nodes" value={data.active_hospitals} subtitle="Participating" dark />
+          <MetricCard title="Global AUC"    value={currentRoundData.avg_auc.toFixed(3)} subtitle="Predictive Utility"    type="auc"   dark />
+          <MetricCard title="DP Gap"        value={currentRoundData.avg_dp.toFixed(3)}  subtitle="Demographic Parity"    type="dp"    dark />
+          <MetricCard title="EO Gap"        value={currentRoundData.avg_eo.toFixed(3)}  subtitle="Equal Opportunity"     type="eo"    dark />
+          <MetricCard title="Active Nodes"  value={data.active_hospitals}               subtitle="Hospital Participants"  type="nodes" dark />
         </div>
 
-        {/* Row 3: Training Chart (now includes live engine) */}
+        {/* Row 3: Training Chart */}
         <TrainingChart
           data={
-  mode === "bias"
-    ? visibleRounds.length > 0
-      ? visibleRounds
-      : data.bias_aware.round_history
-    : data.baseline.round_history
-}
+            mode === "bias"
+              ? visibleRounds.length > 0
+                ? visibleRounds
+                : data.bias_aware.round_history
+              : data.baseline.round_history
+          }
           currentRound={currentRound}
           totalRounds={totalRounds}
           loading={loading}
@@ -276,14 +328,25 @@ export default function Home() {
           currentDpMitigated={currentDpMitigated}
         />
 
-        {/* Row 4: Two-column layout below chart */}
+        {/* Row 4: Full-width Bias Detection Feed */}
+        {mode === "bias" && (
+          <div className="mt-6">
+            <BiasDetectionFeed
+              roundHistory={visibleRounds.length > 0 ? visibleRounds : data.bias_aware.round_history}
+              hospitalMetrics={data.bias_aware.hospital_metrics}
+              baselineHistory={data.baseline?.round_history || []}
+              loading={loading}
+              mode={mode}
+            />
+          </div>
+        )}
+
+        {/* Row 5: Two-column layout below feed */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
-          {/* Left column: Fairness Analytics */}
-          <div>
+          <div className="space-y-6">
             <FairnessAnalytics hospitals={selected.hospital_metrics} mode={mode} />
           </div>
 
-          {/* Right column: Live Mitigation Impact (only in bias mode) + Privacy Engine */}
           <div className="space-y-5">
             {mode === "bias" && (
               <div className="bg-blue-900/20 backdrop-blur-sm p-5 rounded-2xl shadow-xl border border-blue-800/50 relative overflow-hidden">
@@ -302,7 +365,6 @@ export default function Home() {
                   )}
                 </div>
                 <div className="space-y-5 relative z-10">
-                  {/* DP Mitigation */}
                   <div>
                     <div className="flex justify-between items-end mb-1.5">
                       <span className="text-xs text-slate-300 font-medium">Demographic Parity Suppressed</span>
@@ -327,7 +389,6 @@ export default function Home() {
                       </div>
                     </div>
                   </div>
-                  {/* EO Mitigation */}
                   <div>
                     <div className="flex justify-between items-end mb-1.5">
                       <span className="text-xs text-slate-300 font-medium">Equal Opportunity Suppressed</span>
@@ -391,7 +452,7 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Row 5: Hospital Table (only in bias mode and not loading) */}
+        {/* Row 5: Hospital Table */}
         {mode === "bias" && !loading && (
           <div className="mt-6 bg-slate-900/70 backdrop-blur-sm p-6 rounded-2xl shadow-xl border border-slate-800/70">
             <h2 className="text-xl font-bold text-white mb-4 flex items-center">
